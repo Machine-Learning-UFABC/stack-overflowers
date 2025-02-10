@@ -1,0 +1,33 @@
+---
+title: "Solução Lista 01"
+author: |
+        | Nome: Fulano de Tal
+        | E-mail: fdt@aluno.ufabc.edu.br
+        | Nome: Fulano de Tal
+        | E-mail: fdt@aluno.ufabc.edu.br
+        | (Não é preciso informar os RAs)
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      fig.align='center',
+                      cache=TRUE,
+                      out.width = "60%",
+                      out.heigth = "60%",
+                      warning=FALSE,
+                      message=FALSE)
+options(width =70)
+```
+
+## Exercício 01
+
+
+## Exercício 02
+
+
+## Exercício 03
+
+
+## Exercício 04
