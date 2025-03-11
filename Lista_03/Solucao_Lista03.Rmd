@@ -1,0 +1,221 @@
+---
+title: "Solução Lista 03"
+author: | 
+        | Nome: Vinicius de Oliveira Bezerra
+        | E-mail: v.bezerra@aluno.ufabc.edu.br
+        | Nome: Deyved Kevyn Alves Lima
+        | E-mail: deyved.lima@aluno.ufabc.edu.br
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      fig.align='center',
+                      cache=TRUE,
+                      warning=FALSE,
+                      message=FALSE)
+library(tidymodels)
+library(ggplot2)
+library(car)
+library(rsample)
+library(leaps)
+library(dplyr)
+library(broom)
+library(tidyverse)
+library(stringr)
+
+```
+
+# Solução Exercício 01
+```{r}
+#Importações
+library(tidymodels)
+library(ggplot2)
+library(car)
+
+#Carregar o banco de dados
+df = as_tibble(mtcars)
+
+#Regrassão linear
+lin.model = lm(mpg ~ hp, data = df)
+summary(lin.model) #Detalhes do modelo de regressão linear
+```
+
+  O modelo de regressão linear usando hp como preditor para mpg mostrou-se estatisticamente significativo,
+com um valor-p muito baixo (1.79e-07) para o preditor hp. O coeficiente de -0.06823 indica que,
+para cada aumento de uma unidade em hp, o valor de mpg diminui em aproximadamente 0.06823. 
+O R² de 0.6024 sugere que aproximadamente 60% da variabilidade em mpg é explicada por hp,
+indicando um ajuste razoavelmente bom. O erro padrão dos resíduos é 3.863, 
+e a distribuição dos resíduos parece simétrica. Em resumo, hp é um preditor importante para mpg, 
+mas outros fatores podem ser considerados para melhorar o modelo.
+
+```{r}
+#Gerar o gráfico de dispersão
+intercept = coef(lin.model)[1] #Interceptor
+slope = coef(lin.model)[2] #Inclinação
+
+ggplot(df, aes(x = hp, y = mpg)) +
+  geom_point() +  # Adicionar os pontos de dispersão
+  geom_abline(intercept = intercept, slope = slope, color = "blue") +  # Adicionar a reta de regressão
+  labs(title = "Gráfico de Dispersão de mpg vs hp com Reta de Regressão",
+       x = "Horsepower (hp)",
+       y = "Miles per Gallon (mpg)") +
+  theme_minimal()
+```
+
+```{r}
+#Novo modelo de regressão linear
+lin.model.new = lm(mpg ~ ., data = df)
+
+#Verificar o resumo do modelo
+summary(lin.model.new)
+
+#Calcular o fator de inflação de variância (VIF)
+vif(lin.model.new)
+
+```
+
+  A análise do modelo de regressão linear múltipla usando todos os preditores do banco de dados mtcars para prever mpg revelou alguns insights importantes. No modelo anterior, onde apenas hp era usado como preditor, hp era altamente significativo e explicava cerca de 60% da variabilidade em mpg. No entanto, ao incluir todos os preditores no modelo múltiplo, a importância de hp diminuiu significativamente, com um valor-p de 0,335, indicando que ele não é mais estatisticamente significativo. Isso ocorre porque outros preditores, como cyl, disp e wt, estão capturando parte da variabilidade que hp explicava anteriormente, devido à colinearidade entre as variáveis.
+
+  A qualidade geral do modelo é boa, com um R² de 0,869, indicando que 86,9% da variabilidade em mpg é explicada pelos preditores incluídos. No entanto, o R² ajustado de 0,8066 sugere que alguns preditores podem não estar contribuindo significativamente para o modelo. A análise dos fatores de inflação de variância (VIF) mostrou que há colinearidade entre os preditores, especialmente para cyl, disp e wt, que têm VIFs altos. Isso inflaciona os erros padrão dos coeficientes e reduz a significância estatística dos preditores.
+  
+# Solução Exercício 02
+
+```{r}
+library(tidyverse)
+library(car)        
+library(stringr)
+
+# Carregar os Dados
+file_url <- "https://drive.google.com/uc?export=download&id=1jiWcGsl_tbqK5F0ryUTq48kcDTKWTTuk"
+df_orign <- read.csv(file_url) %>% as_tibble()
+
+# Visualizar primeiras linhas
+glimpse(df_orign)
+
+# Seleção e Limpeza dos Dados
+df <- df_orign %>%
+  select(Age, Overall, Potential, Wage, Special,
+         Acceleration, Aggression, Agility, Balance, Ball.control,
+         Composure, Crossing, Curve, Dribbling, Finishing, Positioning,
+         Stamina, Interceptions, Strength, Vision, Volleys, Jumping, Penalties,
+         Shot.power, Sprint.speed, Heading.accuracy, Long.passing, Short.passing) %>%
+  
+  # Extrair apenas números da coluna Wage
+  mutate(Wage = as.integer(str_extract(Wage, "[0-9]+"))) %>%
+  
+  # Converter colunas de texto para número
+  mutate_if(is.character, as.integer) %>%
+  
+  # Remover entradas com NA
+  na.omit()
+
+glimpse(df)
+
+# Criar Modelo de Regressão Linear
+model <- lm(Overall ~ ., data = df)
+summary(model)
+
+# Análise de Colinearidade (VIF)
+vif_values <- vif(model)
+print(vif_values)
+
+# Removendo Variáveis com Alta Colinearidade
+df_reduced <- df %>%
+  select(-Potential, -Short.passing)  # Exemplo de remoção
+
+model_reduced <- lm(Overall ~ ., data = df_reduced)
+summary(model_reduced)
+
+vif(model_reduced)
+```
+
+## Solução Exercicio 03
+```{r}
+# Carregar bibliotecas
+library(leaps)
+library(dplyr)
+library(broom)
+
+# Executar o Best Subset Selection
+regfit.full <- regsubsets(Wage ~ ., data = df, method = "exhaustive", nvmax = nrow(df) - 1)
+
+# Visualizar os resultados
+tidy(regfit.full) %>% View()
+
+# Extrair o resumo e encontrar o melhor modelo
+regfit.summary <- tidy(regfit.full)
+best_model_index <- which.max(regfit.summary$adj.r.squared)
+best_model_index
+
+# Criar o gráfico do R² ajustado
+plot(regfit.summary$adj.r.squared, type = "b", xlab = "Número de Preditores", ylab = "R² Ajustado", main = "R² Ajustado vs Número de Preditores")
+abline(v = best_model_index, col = "red", lty = 2)
+```
+
+# Solução Exercício 04
+
+```{r}
+library(leaps)
+
+regfit.forward <- regsubsets(Wage ~ ., df, method = "forward", nvmax = ncol(df)-1)
+regfit.summary <- tidy(regfit.forward)
+
+# Encontrar o melhor modelo com maior R² ajustado
+best_model <- which.max(regfit.summary$adj.r.squared)
+print(paste("Melhor modelo encontrado com", best_model, "preditores."))
+
+# Gráfico do R² ajustado
+plot.df <- tibble(Preditores = 1:nrow(regfit.summary), R2_Ajustado = regfit.summary$adj.r.squared)
+
+ggplot(plot.df, aes(x = Preditores, y = R2_Ajustado)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Forward Subset Selection: R² Ajustado vs Número de Preditores",
+       x = "Número de Preditores",
+       y = "R² Ajustado")
+```
+
+# Solução Exercício 5
+
+```{r}
+library(rsample)
+
+cv.split <- vfold_cv(df, v = 10)
+
+# Criar matriz para armazenar os resultados
+results <- matrix(0, nrow = length(cv.split$splits), ncol = ncol(df) - 1)
+
+for (i in 1:length(cv.split$splits)) {
+  s <- cv.split$splits[[i]]
+  train <- analysis(s)
+  test <- assessment(s)
+
+  rss.fit <- regsubsets(Wage ~ ., train, method = "forward", nvmax = ncol(df)-1)
+  rss.td <- tidy(rss.fit)
+  
+  for (j in 1:nrow(rss.td)) {
+    coefs <- coef(rss.fit, id = j)
+    v.names <- names(coefs)
+    test.mat <- model.matrix(Wage ~ ., data = test)
+    pred <- test.mat[, v.names] %*% coefs
+    MSS <- mean((test$Wage - pred)^2)
+    results[i, j] = MSS
+  }
+}
+
+# Criar dataframe com resultados médios
+ggplot(tibble(Preditores = 1:ncol(results), MSS = colMeans(results)), aes(x = Preditores, y = MSS)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Erro Médio Quadrático vs Número de Preditores",
+       x = "Número de Preditores",
+       y = "Erro Médio Quadrático")
+
+# Melhor modelo baseado no menor erro médio quadrático
+best_model_cv <- which.min(colMeans(results))
+print(paste("Melhor modelo encontrado com", best_model_cv, "preditores baseado na validação cruzada."))
