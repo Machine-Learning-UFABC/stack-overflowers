@@ -1,0 +1,617 @@
+---
+title: "Solução Lista 04 - Aprendizado de Máquinas"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T,
+                      fig.align='center',
+                      cache=TRUE,
+                      warning=FALSE,
+                      message=FALSE)
+options(width =70)
+
+# Importações
+library(tidymodels)
+library(tidyverse)
+library(car) 
+library(splines)
+
+```
+
+```{r, results = 'hide'}
+#Pré Processamento de dados
+#library(tidymodels)
+
+df = as_tibble(mtcars)
+
+init.split = initial_split(df, prop = 0.8) 
+train = training(init.split)
+test = testing(init.split)
+
+receita = recipe( mpg ~ ., data = df ) %>%
+  step_center(all_predictors()) %>%   # Centra os dados pela média
+  step_scale(all_predictors()) # Escalona os preditores com o desvio padrão
+
+receita_prep = prep(receita, training = train)
+# ˆ Prepara a receita sobre os 
+# dados de treinamento
+train_prep = juice(receita_prep) # < Altera o conjunto de dados de treinamento
+
+map_dbl(train_prep,mean)
+
+map_dbl(train_prep,sd)
+
+test_prep = bake(receita_prep,new_data = test) 
+# < Altera o conjunto de testes
+# de acordo com nossa receita de 
+# preparação dos dados.
+
+map_dbl(test_prep,mean)
+map_dbl(test_prep,sd)
+
+#Escolher os hiper-parametros
+library(glmnet)
+## Define um modelo de regressão linear regularizada,
+## queremos encontrar o melhor parâmetro de penalização
+## \lambda (= penalty)
+lin.model = linear_reg(penalty = tune(), #Marcamos a penalização para ajuste com o tune
+                       mixture = 1) %>% # 0 = Ridge, 1 = Lasso, (0,1) = Elastic-Net
+            set_engine('glmnet')
+  
+## Malha para buscar o melhor valor para o parâmetro penalty.
+## A função penalty() indica que queremos uma malha para este
+## parâmetro e indica limiares recomendados para o parâmetro.
+
+lm.grid <- grid_regular(# Define intervalo e escala recomendada para o 
+                        # parâmetro penalty. Neste caso, alterei para 
+                        # o intervalo de busca para [0.0001,2] (chamei 
+                        # a função log10 porque os parâmetros são escalonados 
+                        # em uma escala de log na base 10). 
+                        penalty(range = log10(c(0.0001, 2))),
+                        levels = 5) #Define o número de pontos que desejamos gerar
+                                    #Para cada parâmetro testado
+
+
+## Gerando 10-folds para validação cruzada
+vfolds = vfold_cv(df, v = 10)
+  
+## Calculando parâmetros
+tune.res = tune_grid(
+  lin.model,          # Nosso modelo de aprendizado de máquina
+  receita,            # Nossa receita de preparo de dados
+  resamples = vfolds, # O nosso conjunto de validação cruzada
+  grid = lm.grid      # Malha de parâmetros para busca
+)  
+  
+  
+tune.res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_line() +
+  geom_point()
+#Podemos ver os melhores com o comando: 
+show_best(tune.res,metric = "rmse")
+
+#Resultados omitidos do pdf
+```
+
+---
+
+# Solução Exercício 1
+```{r}
+#Exercicio 1
+#Carregar e pré-processar os dados:
+#library(tidyverse)
+
+# Carregar os dados
+file_url = "https://drive.google.com/uc?export=download&id=1jiWcGsl_tbqK5F0ryUTq48kcDTKWTTuk"
+df = file_url %>%
+  read.csv %>%
+  as_tibble %>%
+  select(Age, Overall, Potential, Wage, Special,
+         Acceleration, Aggression, Agility, Balance, Ball.control, Composure, Crossing, Curve, Dribbling, Finishing, Positioning, Vision, Stamina, Strength) %>%
+  mutate(Wage = as.integer(str_extract(Wage, "[0-9]+"))) %>%
+  mutate_if(is.character, as.integer) %>%
+  na.omit()
+
+#Aplicar o método Lasso com validação cruzada
+# Definir o modelo Lasso
+lasso_model = linear_reg(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet")
+
+# Definir a validação cruzada
+folds = vfold_cv(df, v = 10)
+
+# Criar um grid de valores de lambda para testar
+lambda_grid = grid_regular(penalty(), levels = 50)
+
+# Ajustar o modelo com validação cruzada
+lasso_tune = tune_grid(
+  lasso_model,
+  Wage ~ .,
+  resamples = folds,
+  grid = lambda_grid,
+  metrics = metric_set(rmse)
+)
+
+# Selecionar o melhor lambda com base no menor RMSE
+best_lambda = select_best(lasso_tune, metric = "rmse")
+best_lambda
+
+# Ajustar o modelo final com o melhor lambda
+final_lasso = finalize_model(lasso_model, best_lambda) %>%
+  fit(Wage ~ ., data = df)
+
+# Extrair os coeficientes
+betas = final_lasso %>%
+  pluck("fit") %>%
+  coef(s = best_lambda$penalty)
+
+# Exibir os coeficientes
+betas
+
+# Ajustar as margens do gráfico
+par(mar = c(4, 4, 2, 1))  # Reduzir as margens
+
+# Plotar o gráfico
+plot(final_lasso %>% pluck("fit"), xvar = "lambda")
+abline(v = log(best_lambda$penalty), col = "red", lty = 2)
+```
+
+---
+
+# Solução Exercício 2
+
+```{r}
+# Exercicio 2
+library(tidyverse)
+library(tidymodels)
+
+# Carregar os dados (mesmo pré-processamento do Exercício 1)
+file_url <- "https://drive.google.com/uc?export=download&id=1jiWcGsl_tbqK5F0ryUTq48kcDTKWTTuk"
+df <- file_url %>%
+  read.csv %>%
+  as_tibble %>%
+  select(Age, Overall, Potential, Wage, Special,
+         Acceleration, Aggression, Agility, Balance, Ball.control, Composure, Crossing, Curve, Dribbling, Finishing, Positioning, Vision, Stamina, Strength) %>%
+  mutate(Wage = as.integer(str_extract(Wage, "[0-9]+"))) %>%
+  mutate_if(is.character, as.integer) %>%
+  na.omit()
+
+# Definir o modelo Ridge (mixture = 0)
+ridge_model <- linear_reg(penalty = tune(), mixture = 0) %>%
+  set_engine("glmnet")
+
+# Definir a validação cruzada
+folds <- vfold_cv(df, v = 10)
+
+# Criar um grid de valores de lambda para testar
+lambda_grid <- grid_regular(penalty(), levels = 50)
+
+# Ajustar o modelo com validação cruzada
+ridge_tune <- tune_grid(
+  ridge_model,
+  Wage ~ .,
+  resamples = folds,
+  grid = lambda_grid,
+  metrics = metric_set(rmse)
+)
+
+# Selecionar o melhor lambda com base no menor RMSE
+best_lambda_ridge <- select_best(ridge_tune, metric = "rmse")
+best_lambda_ridge
+
+# Ajustar o modelo final com o melhor lambda
+final_ridge <- finalize_model(ridge_model, best_lambda_ridge) %>%
+  fit(Wage ~ ., data = df)
+
+# Extrair os coeficientes
+betas_ridge <- final_ridge %>%
+  pluck("fit") %>%
+  coef(s = best_lambda_ridge$penalty)
+
+# Exibir os coeficientes
+betas_ridge
+
+# Gráfico do decaimento dos coeficientes
+plot(final_ridge %>% pluck("fit"), xvar = "lambda")
+abline(v = log(best_lambda_ridge$penalty), col = "red", lty = 2)
+
+```
+## Comparação entre os métodos de Regressão
+
+  A escolha entre Ridge e Lasso depende da natureza do problema: o Ridge reduz a magnitude dos coeficientes sem zerá-los, sendo ideal quando todas as variáveis são consideradas relevantes. Já o Lasso realiza seleção de variáveis, zerando coeficientes de preditores irrelevantes, sendo mais adequado quando há suspeita de que algumas variáveis não contribuem para o modelo. Portanto, use Ridge para problemas onde todas as variáveis são importantes e Lasso quando deseja selecionar um subconjunto de preditores relevantes.
+  
+---
+
+# Resolução Exercício 3
+
+```{r}
+
+# Importação das bibliotecas
+# library(tidymodels)  # Conjunto de pacotes para ML
+# library(tidyverse)   # Manipulação de dados
+# library(car)         # Banco de dados Salaries
+
+# Importação e exploração dos dados
+df <- as_tibble(Salaries)
+glimpse(df)
+
+# Criando a receita de pré-processamento
+receita <- recipe(salary ~ ., data = df) %>%
+  step_dummy(all_nominal(), one_hot = TRUE) %>%  # Variáveis categóricas em dummies
+  step_normalize(all_predictors())               # Normaliza preditores numéricos
+
+# Criando o modelo Elastic-Net
+modelo <- linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet")
+
+# Definição da malha de hiperparâmetros
+grid_parametros <- grid_regular(
+  penalty(),
+  mixture(range = c(0.1, 0.9)),
+  levels = 4
+)
+
+# Criando os conjuntos de treinamento e validação
+set.seed(123)  
+vfolds <- vfold_cv(df, v = 10)
+
+# Ajustando os hiperparâmetros com tune_grid()
+resultados <- tune_grid(
+  modelo,
+  receita,
+  resamples = vfolds,
+  grid = grid_parametros
+)
+
+# Analisando os resultados
+ggplot(resultados %>% collect_metrics() %>% filter(.metric == "rmse"),
+       aes(x = penalty, y = mean, color = as.factor(mixture))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Erro RMSE por Penalização e Mistura",
+       x = "Penalização (λ)",
+       y = "RMSE",
+       color = "Mixture")
+
+# Escolhendo os melhores hiperparâmetros
+melhores_parametros <- show_best(resultados, metric = "rmse")
+print(melhores_parametros)
+
+# Ajustando o modelo final
+melhor_penalty <- melhores_parametros$penalty[1]
+melhor_mixture <- melhores_parametros$mixture[1]
+
+modelo_final <- linear_reg(penalty = melhor_penalty, mixture = melhor_mixture) %>%
+  set_engine("glmnet") %>%
+  fit(salary ~ ., data = df)
+
+# Analisando os coeficientes
+coeficientes <- modelo_final %>% 
+  pluck("fit") %>% 
+  coef(s = melhor_penalty)
+
+print(coeficientes)
+
+```
+---
+
+# Solução Exercício 4
+
+```{r}
+
+# Importação das bibliotecas
+# library(splines)
+# library(tidymodels)  # Conjunto de pacotes para ML
+# library(tidyverse)   # Manipulação de dados
+
+# Gerando o banco de dados artificial
+df <- tibble(
+  x = runif(100, -1, 1),
+  y = 2 * x^3 + x + 10 + rnorm(100, 0, 0.3)
+)
+
+# Criando a receita para regressão polinomial
+receita <- recipe(y ~ ., data = df) %>%
+  step_poly(x, degree = tune())  # Variação do grau do polinômio
+
+# Definição do modelo de regressão linear
+modelo <- linear_reg() %>%
+  set_engine("lm")
+
+# Criando a malha de hiperparâmetros para o grau do polinômio
+grid_parametros <- grid_regular(
+  degree(range = c(1, 5)),  # Testa graus de 1 a 5
+  levels = 5
+)
+
+# Criando os conjuntos de treinamento e validação
+set.seed(123)
+vfolds <- vfold_cv(df, v = 10)
+
+# Ajustando os hiperparâmetros com tune_grid()
+resultados <- tune_grid(
+  modelo,
+  receita,
+  resamples = vfolds,
+  grid = grid_parametros
+)
+
+# Analisando os resultados
+ggplot(resultados %>% collect_metrics() %>% filter(.metric == "rmse"),
+       aes(x = degree, y = mean)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Erro RMSE por Grau do Polinômio",
+       x = "Grau do Polinômio",
+       y = "RMSE")
+
+# Escolhendo o melhor grau do polinômio
+melhor_grau <- show_best(resultados, metric = "rmse")$degree[1]
+
+# Ajustando o modelo final
+modelo_final <- linear_reg() %>%
+  set_engine("lm") %>%
+  fit(y ~ poly(x, melhor_grau), data = df)
+
+# Exibir coeficientes do modelo final
+print(coef(modelo_final$fit))
+
+```
+---
+
+# Solução Exercício 5
+
+```{r}
+
+# Importação das bibliotecas
+# library(splines)
+# library(tidymodels)  # Conjunto de pacotes para ML
+# library(tidyverse)   # Manipulação de dados
+
+# Gerando o banco de dados artificial
+df <- tibble(
+  x = runif(100, -1, 1),
+  y = 2 * x^3 + x + 10 + rnorm(100, 0, 0.3)
+)
+
+# Criando a receita para regressão com splines
+receita <- recipe(y ~ ., data = df) %>%
+  step_ns(x, deg_free = tune())  # Variação dos graus de liberdade
+
+# Definição do modelo de regressão linear
+modelo <- linear_reg() %>%
+  set_engine("lm")
+
+# Criando a malha de hiperparâmetros para os graus de liberdade das splines
+grid_parametros <- grid_regular(
+  deg_free(range = c(2, 10)),  # Testa graus de liberdade de 2 a 10
+  levels = 5
+)
+
+# Criando os conjuntos de treinamento e validação
+set.seed(123)
+vfolds <- vfold_cv(df, v = 10)
+
+# Ajustando os hiperparâmetros com tune_grid()
+resultados <- tune_grid(
+  modelo,
+  receita,
+  resamples = vfolds,
+  grid = grid_parametros
+)
+
+# Analisando os resultados
+ggplot(resultados %>% collect_metrics() %>% filter(.metric == "rmse"),
+       aes(x = deg_free, y = mean)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Erro RMSE por Grau de Liberdade da Spline",
+       x = "Graus de Liberdade",
+       y = "RMSE")
+
+# Escolhendo o melhor grau de liberdade
+melhor_grau <- show_best(resultados, metric = "rmse")$deg_free[1]
+
+# Ajustando o modelo final
+modelo_final <- linear_reg() %>%
+  set_engine("lm") %>%
+  fit(y ~ ns(x, df = melhor_grau), data = df)
+
+# Exibir coeficientes do modelo final
+print(coef(modelo_final$fit))
+
+```
+
+---
+
+# Solução Exercício 6
+## Objetivo
+
+demonstrar que a função \( f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4 (x - \xi)^3_+ \) é uma **spline cúbica de regressão** com um nó em \( \xi \). 
+
+Dado que, **Uma spline cúbica é uma função polinomial por partes, na qual cada segmento é representado por um polinômio cúbico. Essa função é contínua em todos os seus pontos, incluindo os nós (pontos de junção entre os segmentos), e também possui derivadas primeira e segunda contínuas nesses nós, garantindo suavidade e consistência ao longo de toda a curva.**
+
+A função é definida como:
+
+\[
+f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4 (x - \xi)^3_+,
+\]
+
+em que \( (x - \xi)^3_+ = (x - \xi)^3 \) se \( x > \xi \) e \( 0 \) caso contrário.
+
+## A) Encontrar \( f_1(x) \) para \( x \leq \xi \)
+
+Para \( x \leq \xi \), a função \( (x - \xi)^3_+ = 0 \). Portanto, a função \( f(x) \) se reduz a:
+
+\[
+f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3.
+\]
+
+Assim, o polinômio \( f_1(x) \) é:
+
+\[
+f_1(x) = a_1 + b_1 x + c_1 x^2 + d_1 x^3,
+\]
+
+onde:
+
+\[
+a_1 = \beta_0, \quad b_1 = \beta_1, \quad c_1 = \beta_2, \quad d_1 = \beta_3.
+\]
+
+## B) Encontrar \( f_2(x) \) para \( x > \xi \)
+
+Para \( x > \xi \), a função \( (x - \xi)^3_+ = (x - \xi)^3 \). Portanto, a função \( f(x) \) se torna:
+
+\[
+f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4 (x - \xi)^3.
+\]
+
+Expandindo \( (x - \xi)^3 \):
+
+\[
+(x - \xi)^3 = x^3 - 3\xi x^2 + 3\xi^2 x - \xi^3.
+\]
+
+Substituindo na expressão de \( f(x) \):
+
+\[
+f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4 (x^3 - 3\xi x^2 + 3\xi^2 x - \xi^3).
+\]
+
+Agrupando os termos:
+
+\[
+f(x) = (\beta_0 - \beta_4 \xi^3) + (\beta_1 + 3\beta_4 \xi^2) x + (\beta_2 - 3\beta_4 \xi) x^2 + (\beta_3 + \beta_4) x^3.
+\]
+
+Assim, o polinômio \( f_2(x) \) é:
+
+\[
+f_2(x) = a_2 + b_2 x + c_2 x^2 + d_2 x^3,
+\]
+
+em que:
+
+\[
+a_2 = \beta_0 - \beta_4 \xi^3, \quad b_2 = \beta_1 + 3\beta_4 \xi^2, \quad c_2 = \beta_2 - 3\beta_4 \xi, \quad d_2 = \beta_3 + \beta_4.
+\]
+
+## C) Continuidade de \( f(x) \) em \( \xi \)
+
+Para mostrar que \( f(x) \) é contínua em \( \xi \), verificamos que:
+
+\[
+f_1(\xi) = f_2(\xi).
+\]
+
+Calculando \( f_1(\xi) \):
+
+\[
+f_1(\xi) = \beta_0 + \beta_1 \xi + \beta_2 \xi^2 + \beta_3 \xi^3.
+\]
+
+Calculando \( f_2(\xi) \):
+
+\[
+f_2(\xi) = (\beta_0 - \beta_4 \xi^3) + (\beta_1 + 3\beta_4 \xi^2) \xi + (\beta_2 - 3\beta_4 \xi) \xi^2 + (\beta_3 + \beta_4) \xi^3.
+\]
+
+Simplificando \( f_2(\xi) \):
+
+\[
+f_2(\xi) = \beta_0 - \beta_4 \xi^3 + \beta_1 \xi + 3\beta_4 \xi^3 + \beta_2 \xi^2 - 3\beta_4 \xi^3 + \beta_3 \xi^3 + \beta_4 \xi^3.
+\]
+
+Os termos \( -\beta_4 \xi^3 \), \( 3\beta_4 \xi^3 \), \( -3\beta_4 \xi^3 \) e \( \beta_4 \xi^3 \) se cancelam, resultando em:
+
+\[
+f_2(\xi) = \beta_0 + \beta_1 \xi + \beta_2 \xi^2 + \beta_3 \xi^3.
+\]
+
+Portanto, \( f_1(\xi) = f_2(\xi) \), e \( f(x) \) é contínua em \( \xi \).
+
+## D) Continuidade da Primeira Derivada em \( \xi \)
+
+A primeira derivada de \( f_1(x) \) é:
+
+\[
+f_1'(x) = \beta_1 + 2\beta_2 x + 3\beta_3 x^2.
+\]
+
+A primeira derivada de \( f_2(x) \) é:
+
+\[
+f_2'(x) = (\beta_1 + 3\beta_4 \xi^2) + 2(\beta_2 - 3\beta_4 \xi) x + 3(\beta_3 + \beta_4) x^2.
+\]
+
+Avaliando em \( x = \xi \):
+
+\[
+f_1'(\xi) = \beta_1 + 2\beta_2 \xi + 3\beta_3 \xi^2,
+\]
+
+\[
+f_2'(\xi) = (\beta_1 + 3\beta_4 \xi^2) + 2(\beta_2 - 3\beta_4 \xi) \xi + 3(\beta_3 + \beta_4) \xi^2.
+\]
+
+Simplificando \( f_2'(\xi) \):
+
+\[
+f_2'(\xi) = \beta_1 + 3\beta_4 \xi^2 + 2\beta_2 \xi - 6\beta_4 \xi^2 + 3\beta_3 \xi^2 + 3\beta_4 \xi^2.
+\]
+
+Os termos \( 3\beta_4 \xi^2 \), \( -6\beta_4 \xi^2 \) e \( 3\beta_4 \xi^2 \) se cancelam, resultando em:
+
+\[
+f_2'(\xi) = \beta_1 + 2\beta_2 \xi + 3\beta_3 \xi^2.
+\]
+
+Portanto, \( f_1'(\xi) = f_2'(\xi) \), e a primeira derivada é contínua em \( \xi \).
+
+## E) Continuidade da Segunda Derivada em \( \xi \)
+
+A segunda derivada de \( f_1(x) \) é:
+
+\[
+f_1''(x) = 2\beta_2 + 6\beta_3 x.
+\]
+
+A segunda derivada de \( f_2(x) \) é:
+
+\[
+f_2''(x) = 2(\beta_2 - 3\beta_4 \xi) + 6(\beta_3 + \beta_4) x.
+\]
+
+Avaliando em \( x = \xi \):
+
+\[
+f_1''(\xi) = 2\beta_2 + 6\beta_3 \xi,
+\]
+
+\[
+f_2''(\xi) = 2(\beta_2 - 3\beta_4 \xi) + 6(\beta_3 + \beta_4) \xi.
+\]
+
+Simplificando \( f_2''(\xi) \):
+
+\[
+f_2''(\xi) = 2\beta_2 - 6\beta_4 \xi + 6\beta_3 \xi + 6\beta_4 \xi.
+\]
+
+Os termos \( -6\beta_4 \xi \) e \( 6\beta_4 \xi \) se cancelam, resultando em:
+
+\[
+f_2''(\xi) = 2\beta_2 + 6\beta_3 \xi.
+\]
+
+Portanto, \( f_1''(\xi) = f_2''(\xi) \), e a segunda derivada é contínua em \( \xi \).
+
+---
